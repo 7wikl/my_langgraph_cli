@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 from ai_app.config.settings import settings
@@ -15,17 +14,12 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
 from ai_app.agent.state import AgentState
 from ai_app.config.prompts import get_system_prompt
-from ai_app.observability.langfuse import (
-    finalize_trace_node,
-    get_trace,
-    init_trace_node,
-    initialize_langfuse,
-)
 from ai_app.tools.card.kline_card import show_kline_card
 from ai_app.tools.dbsql.exec_sql import execute_sql
 from ai_app.tools.dbsql.get_ai_sql import get_ai_sql
@@ -42,9 +36,9 @@ def _get_model() -> ChatOpenAI:
     global _model
     if _model is None:
         _model = ChatOpenAI(
-            model=os.environ.get("LLM_MODEL_NAME", "gpt-4"),
+            model=settings.LLM_MODEL_NAME,
             temperature=0.1,
-            base_url=os.environ.get("LLM_BASE_URL"),
+            base_url=settings.LLM_BASE_URL or None,
         )
     return _model
 
@@ -65,9 +59,8 @@ TOOLS = list(TOOLS_BY_NAME.values())
 # ---------------------------------------------------------------------------
 
 
-def _llm_call(state: AgentState, config: Any) -> dict:
+def _llm_call(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """Invoke the LLM with system prompt and current messages."""
-    trace = get_trace(state)
     system_prompt = get_system_prompt()
 
     # Inject conversation summary if available
@@ -79,33 +72,7 @@ def _llm_call(state: AgentState, config: Any) -> dict:
 
     llm_input = [SystemMessage(content=system_prompt), *messages_for_model]
 
-    generation = None
-    if trace:
-        generation = trace.generation(
-            name="llm-call",
-            model=os.environ.get("LLM_MODEL_NAME", "gpt-4"),
-            input=str(llm_input),
-            metadata={
-                "message_count": len(state["messages"]),
-                "llm_call_number": (state.get("llm_calls") or 0) + 1,
-            },
-        )
-
     result = _get_model().bind_tools(TOOLS).invoke(llm_input)
-
-    if generation:
-        usage = result.usage_metadata or {}
-        generation.update(
-            output=json.dumps(
-                {"content": result.content, "tool_calls": result.tool_calls},
-                ensure_ascii=False,
-            ),
-            usage={
-                "input": usage.get("input_tokens", 0),
-                "output": usage.get("output_tokens", 0),
-                "total": usage.get("total_tokens", 0),
-            },
-        )
 
     return {
         "messages": [result],
@@ -118,7 +85,7 @@ def _llm_call(state: AgentState, config: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _tool_node(state: AgentState, config: Any) -> dict:
+def _tool_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """Execute tool calls from the last AI message."""
     messages = state.get("messages", [])
     last_message = messages[-1] if messages else None
@@ -130,7 +97,6 @@ def _tool_node(state: AgentState, config: Any) -> dict:
     if not tool_calls:
         return {"messages": []}
 
-    trace = get_trace(state)
     new_messages: list[ToolMessage] = []
 
     sql_retry_count = state.get("sql_retry_count") or 0
@@ -143,16 +109,9 @@ def _tool_node(state: AgentState, config: Any) -> dict:
         if not tool:
             raise ValueError(f'Tool "{tool_call["name"]}" not found')
 
-        span = None
-        if trace:
-            span = trace.span(
-                name=f"tool-{tool_call['name']}",
-                input=tool_call.get("args"),
-            )
-
         try:
             observation = tool.invoke(tool_call.get("args"))
-            # Serialize (bigint → str for JSON compatibility)
+            # Serialize (bigint -> str for JSON compatibility)
             content = json.dumps(observation, ensure_ascii=False, default=str)
 
             # SQL execution error handling: retry up to 3 times
@@ -181,11 +140,6 @@ def _tool_node(state: AgentState, config: Any) -> dict:
                                 ensure_ascii=False,
                             ),
                         )
-                        if span:
-                            span.update(
-                                output=warning.content,
-                                metadata={"retryCount": sql_retry_count, "status": "max_retries_exceeded"},
-                            )
                         new_messages.append(warning)
                         return {
                             "messages": [*messages, *new_messages],
@@ -205,11 +159,6 @@ def _tool_node(state: AgentState, config: Any) -> dict:
                             ensure_ascii=False,
                         ),
                     )
-                    if span:
-                        span.update(
-                            output=error_msg.content,
-                            metadata={"retryCount": sql_retry_count, "status": "sql_error"},
-                        )
                     new_messages.append(error_msg)
                     continue
 
@@ -229,16 +178,9 @@ def _tool_node(state: AgentState, config: Any) -> dict:
                 name=tool_call["name"],
                 content=content,
             )
-            if span:
-                span.update(output=content)
             new_messages.append(tool_msg)
 
         except Exception as e:
-            if span:
-                span.update(
-                    output="ERROR",
-                    metadata={"message": str(e)},
-                )
             raise
 
     return {
@@ -255,22 +197,9 @@ def _tool_node(state: AgentState, config: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _summarize_node(state: AgentState, config: Any) -> dict:
+def _summarize_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """Summarize older messages to manage context window size."""
-    import time
-
     print(f"LLM calls threshold reached ({state.get('llm_calls')}), generating summary...")
-
-    trace = get_trace(state)
-    summary_span = None
-    if trace:
-        summary_span = trace.span(
-            name="conversation-summary",
-            input={
-                "message_count": len(state["messages"]),
-                "llm_calls": state.get("llm_calls", 0),
-            },
-        )
 
     # Find cut point: keep last 6 messages, avoid splitting tool calls
     messages = state.get("messages", [])
@@ -323,15 +252,6 @@ def _summarize_node(state: AgentState, config: Any) -> dict:
             else str(summary_result)
         )
 
-        if summary_span:
-            summary_span.update(
-                output=new_summary,
-                metadata={
-                    "messages_summarized_count": len(messages_to_summarize),
-                    "total_summarized_index": cut_index,
-                },
-            )
-
         print(f"Summary generated. Updated summary covering up to index {cut_index}.")
 
         return {
@@ -340,8 +260,6 @@ def _summarize_node(state: AgentState, config: Any) -> dict:
             "messages_summarized_count": cut_index,
         }
     except Exception as e:
-        if summary_span:
-            summary_span.update(output="ERROR", metadata={"error": str(e)})
         print(f"❌ Summary generation failed: {e}")
         return {}
 
@@ -351,18 +269,9 @@ def _summarize_node(state: AgentState, config: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _error_handler(state: AgentState, config: Any) -> dict:
+def _error_handler(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """Generate a friendly error message when SQL retries are exhausted."""
-    trace = get_trace(state)
     last_sql_error = state.get("last_sql_error") or "未知错误"
-
-    generation = None
-    if trace:
-        generation = trace.generation(
-            name="error-handler",
-            model=os.environ.get("LLM_MODEL_NAME", "gpt-4"),
-            input={"lastSqlError": last_sql_error},
-        )
 
     error_prompt = [
         SystemMessage(
@@ -374,16 +283,6 @@ def _error_handler(state: AgentState, config: Any) -> dict:
     ]
 
     result = _get_model().invoke(error_prompt)
-
-    if generation:
-        usage = result.usage_metadata or {}
-        generation.update(
-            output=result.content,
-            usage={
-                "input": usage.get("input_tokens", 0),
-                "output": usage.get("output_tokens", 0),
-            },
-        )
 
     return {
         "messages": [result],
@@ -405,11 +304,11 @@ def _should_continue(state: AgentState) -> Literal["toolNode", "errorHandler", "
     """Decide which node to route to after llmCall."""
     llm_calls = state.get("llm_calls") or 0
 
-    # 50 calls → force end
+    # 50 calls -> force end
     if llm_calls >= 50:
         return "finalizeTrace"
 
-    # SQL retries exhausted → error handler
+    # SQL retries exhausted -> error handler
     if state.get("sql_max_retries_exceeded"):
         return "errorHandler"
 
@@ -447,18 +346,15 @@ async def create_agent() -> Any:
     if _compiled_graph is not None:
         return _compiled_graph
 
-    # Initialize LangFuse
-    initialize_langfuse()
-
     # Build the graph
     graph = (
         StateGraph(AgentState)
-        .add_node("initTrace", init_trace_node)
+        .add_node("initTrace", lambda state, config=None: state)
         .add_node("llmCall", _llm_call)
         .add_node("toolNode", _tool_node)
         .add_node("summarizeNode", _summarize_node)
         .add_node("errorHandler", _error_handler)
-        .add_node("finalizeTrace", finalize_trace_node)
+        .add_node("finalizeTrace", lambda state, config=None: state)
         .add_edge(START, "initTrace")
         .add_edge("initTrace", "llmCall")
         .add_conditional_edges(

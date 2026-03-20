@@ -1,6 +1,11 @@
 """Application settings - loads configuration from .env via pydantic-settings."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve .env relative to this file's directory (project root), not CWD
+_ENV_FILE = Path(__file__).parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -44,7 +49,7 @@ class Settings(BaseSettings):
     LANGCHAIN_PROJECT: str = ""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )
