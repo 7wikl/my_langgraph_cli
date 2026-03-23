@@ -12,8 +12,7 @@ class Settings(BaseSettings):
     # LLM settings
     LLM_MODEL_NAME: str = "gpt-3.5-turbo"
     OPENAI_API_KEY: str = ""
-    LLM_BASE_URL: str = "https://api.openai.com/v1"
-
+    LLM_BASE_URL: str = "http://192.168.1.40:30002/v1"
     # LangFuse observability
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""

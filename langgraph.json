@@ -1,11 +1,7 @@
 {
-  "dependencies": ["./pyproject.toml"],
+  "dependencies": ["."],
   "graphs": {
     "agent": "./ai_app/agent/graph.py:create_agent"
-  },
-  "store": {
-    "provider": "postgresql",
-    "database_uri": "postgresql://postgres:asdasd2@localhost:5432/langgraph"
   },
   "env":".env"
 }

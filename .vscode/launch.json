@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "langgraph dev",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "f:/ai_app_refactor/.venv/Scripts/langgraph.exe",
+            "args": ["dev", "--host", "0.0.0.0", "--allow-blocking"],
+            "cwd": "f:/ai_app_refactor",
+            "env": {
+                "PYTHONPATH": "f:/ai_app_refactor"
+            },
+            "justMyCode": true,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "FastAPI (uvicorn)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": ["ai_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+            "cwd": "f:/ai_app_refactor",
+            "env": {
+                "PYTHONPATH": "f:/ai_app_refactor"
+            },
+            "console": "integratedTerminal"
+        }
+    ]
+}

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from langgraph.checkpoint.postgres import PostgresSaver; print\\(dir\\(PostgresSaver\\)\\)\")",
+      "Bash(uv pip:*)",
+      "Bash(python -c \"import langgraph.checkpoint.postgres; print\\(dir\\(langgraph.checkpoint.postgres\\)\\)\")",
+      "Bash(pip install:*)",
+      "WebFetch(domain:127.0.0.1)"
+    ]
+  }
+}

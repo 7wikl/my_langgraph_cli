@@ -37,7 +37,7 @@ def _get_model() -> ChatOpenAI:
     if _model is None:
         _model = ChatOpenAI(
             model=settings.LLM_MODEL_NAME,
-            temperature=0.1,
+            temperature=0,
             base_url=settings.LLM_BASE_URL or None,
         )
     return _model
@@ -349,14 +349,14 @@ async def create_agent() -> Any:
     # Build the graph
     graph = (
         StateGraph(AgentState)
-        .add_node("initTrace", lambda state, config=None: state)
+        # .add_node("initTrace", lambda state, config=None: state)
         .add_node("llmCall", _llm_call)
         .add_node("toolNode", _tool_node)
         .add_node("summarizeNode", _summarize_node)
         .add_node("errorHandler", _error_handler)
         .add_node("finalizeTrace", lambda state, config=None: state)
-        .add_edge(START, "initTrace")
-        .add_edge("initTrace", "llmCall")
+        .add_edge(START, "llmCall")
+        # .add_edge("initTrace", "llmCall")
         .add_conditional_edges(
             "llmCall",
             _should_continue,

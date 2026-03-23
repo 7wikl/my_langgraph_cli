@@ -3,7 +3,7 @@ name = "ai-app-refactor"
 version = "0.1.0"
 description = "Financial Agent - A Chinese A-share market investment advisor powered by LangGraph"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     # LangGraph & LangChain
     "langgraph-cli[inmem]>=0.4.18",
@@ -22,8 +22,7 @@ dependencies = [
     # Cache
     "redis>=5.2.0",
     # HTTP Client
-    "httpx>=0.28.0",
-    # Validation & Config
+    "httpx>=0.28.0",    # Validation & Config
     "pydantic>=2.10.0",
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.1",
